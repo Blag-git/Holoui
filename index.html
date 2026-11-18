@@ -51,6 +51,7 @@ body.cal #cal{display:block}
 #cal .dot{position:absolute;width:38px;height:38px;margin:-19px 0 0 -19px;border-radius:50%;border:2px solid var(--c);box-shadow:0 0 18px var(--c);animation:p 1.2s infinite}
 #cal .dot::after{content:"";position:absolute;inset:13px;border-radius:50%;background:var(--c)}
 #cal .t{position:absolute;left:0;right:0;top:calc(46px + env(safe-area-inset-top,0px));text-align:center;padding:0 24px;color:var(--fg)}
+#cal .q{position:absolute;left:0;right:0;bottom:calc(24px + env(safe-area-inset-bottom,0px));text-align:center;padding:0 24px;font-size:12px;color:var(--c);white-space:pre-line}
 </style>
 </head>
 <body>
@@ -108,6 +109,7 @@ body.cal #cal{display:block}
   <h2 data-drag>GESTURES <span data-act="close" data-v="p-help" style="cursor:pointer;padding:0 4px">✕</span></h2>
   <div class="b">
     <div>HAND: fingertip moves the cursor, thumb + index pinch clicks, pinch a title bar to drag.</div>
+    <div>TWO HANDS: pinch the same panel with both hands, then spread or turn your hands to zoom and rotate it.</div>
     <div>EYE: look at a button and hold your gaze for one second. Panels can't be dragged.</div>
     <div>BOTH: eyes aim, pinch clicks. Pinch a title bar and move your hand to drag.</div>
     <div>Calibrate eyes first. Prop the phone up and keep your head still.</div>
@@ -125,7 +127,7 @@ body.cal #cal{display:block}
 
 <button id="orb" data-act="menu">MENU</button>
 <div id="hint">Tap a button, or use your hand once the camera is on.</div>
-<div id="cal"><div class="t" id="cal-t"></div><div class="dot" id="cal-dot"></div></div>
+<div id="cal"><div class="t" id="cal-t"></div><div class="dot" id="cal-dot"></div><div class="q" id="cal-q"></div></div>
 <canvas id="fx"></canvas>
 
 <script type="module">
@@ -165,7 +167,7 @@ function mapRegion(nx,ny){
   return [f(1-nx)*W, f(ny)*H];
 }
 /* eye features from the 478 face landmarks. Both eyes are measured in IMAGE x so they add up instead of cancelling. */
-function eyeFeatures(L){
+function eyeFeatures(L,bs){
   const h=(i,a,b)=>{ const w=Math.abs(L[b].x-L[a].x)||1e-6; return (L[i].x-(L[a].x+L[b].x)/2)/w; };
   const v=(i,t,b)=>{ const hh=(L[b].y-L[t].y)||1e-6; return (L[i].y-(L[t].y+L[b].y)/2)/hh; };
   const ih=(h(468,33,133)+h(473,263,362))/2;
@@ -174,7 +176,10 @@ function eyeFeatures(L){
   const fh=Math.hypot(L[152].x-L[10].x,L[152].y-L[10].y)||1e-6;
   const yaw=(L[1].x-(L[234].x+L[454].x)/2)/fw;
   const pitch=(L[1].y-(L[10].y+L[152].y)/2)/fh;
-  return [ih,iv,yaw,pitch,(L[33].x+L[263].x)/2,(L[33].y+L[263].y)/2];
+  const b=bs||{}, k=n=>b[n]||0;      // MediaPipe's learned gaze estimate: much steadier than raw iris position
+  const bsH=(k('eyeLookOutLeft')+k('eyeLookInRight'))-(k('eyeLookInLeft')+k('eyeLookOutRight'));
+  const bsV=(k('eyeLookUpLeft')+k('eyeLookUpRight'))-(k('eyeLookDownLeft')+k('eyeLookDownRight'));
+  return [ih,iv,yaw,pitch,(L[33].x+L[263].x)/2,(L[33].y+L[263].y)/2,bsH,bsV];
 }
 function solve(A,b){
   const n=b.length, M=A.map((r,i)=>[...r,b[i]]);
@@ -185,7 +190,7 @@ function solve(A,b){
   }
   return M.map((r,i)=>r[n]/(r[i]||1e-12));
 }
-const SD_FLOOR=[0.02,0.02,0.01,0.01,0.01,0.01];
+const SD_FLOOR=[0.02,0.02,0.01,0.01,0.01,0.01,0.04,0.04];
 function ridgeFit(F,Y,lam=0.05){
   const d=F[0].length, n=F.length, mu=Array(d).fill(0), sd=Array(d).fill(0);
   F.forEach(f=>f.forEach((v,j)=>mu[j]+=v/n));
@@ -215,13 +220,29 @@ function cvError(all,w,h){
 }
 
 /* ================= UI: hover / click / drag shared by hand, eyes, touch, mouse ================= */
-let taps=0, drag=null, hoverEl=null;
+let taps=0; const drags={}, hov={};
 const panels=[...document.querySelectorAll('.panel')];
 function bringFront(p){ panels.forEach(q=>q.style.zIndex=20); p.style.zIndex=26; }
-function startDrag(p,x,y){ const r=p.getBoundingClientRect(); p.style.right='auto'; p.style.bottom='auto'; p.style.left=r.left+'px'; p.style.top=r.top+'px'; drag={p,dx:x-r.left,dy:y-r.top}; p.classList.add('drag'); bringFront(p); }
-function moveDrag(x,y){ if(!drag) return; const p=drag.p, r=p.getBoundingClientRect();
-  p.style.left=Math.min(W-r.width-4,Math.max(4,x-drag.dx))+'px'; p.style.top=Math.min(H-r.height-4,Math.max(40,y-drag.dy))+'px'; }
-function endDrag(){ if(drag){ drag.p.classList.remove('drag'); drag=null; } }
+function startDrag(id,p,x,y){
+  endDrag(id);
+  const L=p.offsetLeft,T=p.offsetTop,w=p.offsetWidth,h=p.offsetHeight;   // layout box: unaffected by zoom/rotate (which pivot on the centre)
+  p.style.right='auto'; p.style.bottom='auto'; p.style.left=L+'px'; p.style.top=T+'px';
+  drags[id]={p,ox:x-(L+w/2),oy:y-(T+h/2)}; p.classList.add('drag'); bringFront(p);
+}
+function moveDrag(id,x,y){
+  const d=drags[id]; if(!d) return; const p=d.p;
+  const cx=Math.min(W,Math.max(0,x-d.ox)), cy=Math.min(H,Math.max(40,y-d.oy));
+  p.style.left=(cx-p.offsetWidth/2)+'px'; p.style.top=(cy-p.offsetHeight/2)+'px';
+}
+function endDrag(id){
+  const ids=id===undefined?Object.keys(drags):[id];
+  for(const k of ids){ if(drags[k]){ drags[k].p.classList.remove('drag'); delete drags[k]; } }
+}
+/* two hands pinching the same panel: spread/close = zoom, turn = rotate */
+let xf=null;
+function applyXf(p,sc,rot){ p.dataset.s=sc; p.dataset.r=rot; p.style.transform=`rotate(${rot}rad) scale(${sc})`; }
+function beginXf(p,a,b){ endDrag(); xf={p,d0:Math.max(30,Math.hypot(b.x-a.x,b.y-a.y)),a0:Math.atan2(b.y-a.y,b.x-a.x),s0:+p.dataset.s||1,r0:+p.dataset.r||0,s:+p.dataset.s||1,r:+p.dataset.r||0}; p.classList.add('drag'); bringFront(p); }
+function endXf(){ if(xf){ xf.p.classList.remove('drag'); xf=null; } }
 const THEMES={cyan:['#2de2ff','#7a5cff'],violet:['#b388ff','#2de2ff'],amber:['#ffb347','#ff5e62']};
 const state={vid:1,skel:true};
 let mode='hand', blinkClick=false;
@@ -270,9 +291,11 @@ function snap(x,y,withHandles){
   if(!best) return {};
   return best.dataset.act?{act:best}:{handle:best,panel:best.closest('.panel')};
 }
-function hoverFrom(h){
-  const el=h.act||h.handle||null;
-  if(el!==hoverEl){ hoverEl?.classList.remove('hover'); el?.classList.add('hover'); hoverEl=el; }
+function hoverFrom(h,key='main'){
+  const el=h.act||h.handle||null; hov[key]=el;
+  const live=Object.values(hov);
+  document.querySelectorAll('.hover').forEach(n=>{ if(!live.includes(n)) n.classList.remove('hover'); });
+  if(el) el.classList.add('hover');
   return h;
 }
 addEventListener('pointerdown',e=>{
@@ -280,14 +303,15 @@ addEventListener('pointerdown',e=>{
   if(e.target.closest('#go')) return;
   const h=pick(e.clientX,e.clientY);
   if(h.act){ act(h.act); return; }
-  if(h.handle) startDrag(h.panel,e.clientX,e.clientY);
+  if(h.handle) startDrag('m',h.panel,e.clientX,e.clientY);
 });
-addEventListener('pointermove',e=>moveDrag(e.clientX,e.clientY));
-addEventListener('pointerup',endDrag); addEventListener('pointercancel',endDrag);
+addEventListener('pointermove',e=>moveDrag('m',e.clientX,e.clientY));
+addEventListener('pointerup',()=>endDrag('m')); addEventListener('pointercancel',()=>endDrag('m'));
 
 /* ================= eye tracking: calibration, gaze, dwell, blink ================= */
 const CAL_PTS=[[.1,.12],[.5,.12],[.9,.12],[.1,.5],[.5,.5],[.9,.5],[.1,.88],[.5,.88],[.9,.88]];
-const cal={on:false,i:0,ph:'settle',t0:0,s:[],all:[]};
+const GOOD={fw:.4,cx:.5,cy:.5,bright:128};
+const cal={on:false,i:0,ph:'ready',t0:0,s:[],all:[],ok0:0,h0:null,last:0,why:''};
 let gazeModel=null;
 const gaze={x:W/2,y:H/2,vis:false,t:0,h:{}};
 let gfx=oneEuro(.5,.004), gfy=oneEuro(.5,.004);
@@ -296,19 +320,21 @@ let blinkT0=0;
 
 function setMode(m, announce=true){
   mode=m; $('#mode-s').textContent=m.toUpperCase();
-  hoverFrom({}); lastSnap=null; dw.el=null; dw.p=0; spent=null; endDrag();
+  hoverFrom({}); lastSnap=null; dw.el=null; dw.p=0; spent=null; endDrag(); endXf();
   if(m==='hand') gaze.vis=false;
   if(announce && running){
     ensureModels().then(()=>{ if(m!=='hand' && !gazeModel) startCal(); }).catch(e=>hint('Model failed: '+(e&&e.message||e)));
   }
 }
 function showDot(){
-  const [px,py]=CAL_PTS[cal.i]; const d=$('#cal-dot'); d.style.left=px*100+'%'; d.style.top=py*100+'%';
-  $('#cal-t').textContent=`Look at the dot. Point ${cal.i+1} of 9. Keep your head still. Tap anywhere to cancel.`;
+  const [px,py]=CAL_PTS[cal.i]; const d=$('#cal-dot'); d.style.left=px*100+'%'; d.style.top=py*100+'%'; d.style.display='';
+  $('#cal-t').textContent=`Look at the dot with your EYES only. Keep your head still. Point ${cal.i+1} of 9. Tap anywhere to cancel.`;
 }
 function startCal(){
-  cal.on=true; cal.i=0; cal.all=[]; cal.s=[]; cal.ph='settle'; cal.t0=performance.now();
-  endDrag(); hoverFrom({}); document.body.classList.add('cal'); showDot();
+  cal.on=true; cal.i=0; cal.all=[]; cal.s=[]; cal.ph='ready'; cal.t0=cal.last=performance.now(); cal.ok0=0; cal.why='';
+  endDrag(); hoverFrom({}); document.body.classList.add('cal'); $('#cal-dot').style.display='none';
+  $('#cal-t').textContent="Hold the phone at arm's length, propped up if you can. Put your face in the middle of the picture. Tap anywhere to cancel.";
+  $('#cal-q').textContent='Waiting for a face…';
 }
 function cancelCal(m){ cal.on=false; document.body.classList.remove('cal'); hint(m); }
 function finishCal(){
@@ -316,26 +342,64 @@ function finishCal(){
   gazeModel=ridgeFit(cal.all.map(s=>s.f),cal.all.map(s=>s.y));
   const e=cvError(cal.all,W,H); gaze.vis=false; gfx=oneEuro(.5,.004); gfy=oneEuro(.5,.004);
   $('#v-gerr').textContent=`${Math.round(e)} px · ${(100*e/W).toFixed(0)}% of width`;
-  hint(e>0.28*W ? 'Calibration is rough. Use brighter light, hold still, and calibrate again for better results.' : 'Calibrated. Look at a button and hold your gaze to select.');
+  hint(e>0.28*W ? 'Calibration is rough. Brighter light and holding your head still help most. Tap Calibrate eyes to retry.' : 'Calibrated. Look at a button and hold your gaze to select.');
 }
-function calStep(feat,blink,t){
-  if(t-cal.t0>9000){ cancelCal('Could not see your face well enough. Face the camera in good light and try again.'); return; }
-  if(blink>0.35||!feat) return;
-  if(cal.ph==='settle'){ if(t-cal.t0>900){ cal.ph='collect'; cal.t0=t; cal.s=[]; } return; }
-  cal.s.push(feat);
-  if(cal.s.length>=22 || (t-cal.t0>3500 && cal.s.length>=8)){
-    cal.s.forEach(f=>cal.all.push({f,y:CAL_PTS[cal.i],pi:cal.i}));
-    cal.i++;
-    if(cal.i>=9) finishCal(); else { cal.ph='settle'; cal.t0=t; showDot(); }
+function qCheck(q){
+  const bad=[];
+  if(q.fw<.22) bad.push('Move the phone closer'); else if(q.fw>.7) bad.push('Move the phone farther away');
+  if(q.cx<.25||q.cx>.75||q.cy<.2||q.cy>.8) bad.push('Center your face in the picture');
+  if(q.bright<60) bad.push('Too dark: face a light');
+  return bad;
+}
+const qLine=q=>`Face ${Math.round(q.fw*100)}% of width (want 22 to 70)\nLight ${Math.round(q.bright)} (want 60 or more)\nPosition ${Math.round(q.cx*100)}, ${Math.round(q.cy*100)} (want 25 to 75, 20 to 80)`;
+function trimSamples(S){        // drop samples that jump away from the point's typical value (saccades, half blinks)
+  const med=a=>{ const b=[...a].sort((x,y)=>x-y); return b[b.length>>1]; };
+  const keep=S.map(()=>true);
+  for(const j of [0,1,6,7]){
+    const col=S.map(s=>s[j]), m=med(col), mad=med(col.map(v=>Math.abs(v-m))), lim=Math.max(3*1.4826*mad,SD_FLOOR[j]*0.5);
+    col.forEach((v,i)=>{ if(Math.abs(v-m)>lim) keep[i]=false; });
   }
+  const out=S.filter((_,i)=>keep[i]); return out.length>=6?out:S;
+}
+function calStep(feat,blink,t,q){
+  const qt=$('#cal-q');
+  if(!feat){ qt.textContent='No face found. Face the camera, in the light.'; cal.ok0=0; cal.s=[]; cal.why='No face found'; }
+  else {
+    const bad=qCheck(q); qt.textContent=qLine(q)+(bad.length?'\n'+bad[0]:'');
+    if(bad.length){ cal.ok0=0; cal.s=[]; cal.why=bad[0]; }
+    else {
+      cal.last=t;
+      if(blink<=0.35){
+        if(cal.ph==='ready'){
+          if(!cal.ok0) cal.ok0=t;
+          if(t-cal.ok0>1000){ cal.ph='settle'; cal.t0=t; showDot(); }
+        } else if(cal.ph==='settle'){
+          if(t-cal.t0>1000){ cal.ph='collect'; cal.t0=t; cal.s=[]; cal.h0=[feat[4],feat[5]]; }
+        } else {
+          if(Math.hypot(feat[4]-cal.h0[0],feat[5]-cal.h0[1])>0.03){      // head moved: restart this dot
+            cal.s=[]; cal.h0=[feat[4],feat[5]]; cal.t0=t; qt.textContent+='\nHold your head still, move only your eyes';
+          } else {
+            cal.s.push(feat);
+            if(cal.s.length>=28 || (t-cal.t0>4500 && cal.s.length>=10)){
+              trimSamples(cal.s).forEach(f=>cal.all.push({f,y:CAL_PTS[cal.i],pi:cal.i}));
+              cal.i++;
+              if(cal.i>=9) finishCal(); else { cal.ph='settle'; cal.t0=t; showDot(); }
+            }
+          }
+        }
+      }
+    }
+  }
+  if(cal.on && t-cal.last>20000) cancelCal('Calibration stopped: '+(cal.why||'no good view of your face')+'. Fix that and tap Calibrate eyes.');
 }
 function blinkTrack(b,t){        // true once, when a deliberate blink (0.3 to 1.0 s, both eyes) ends
   if(b>0.55){ if(!blinkT0) blinkT0=t; return false; }
   if(blinkT0){ const d=t-blinkT0; blinkT0=0; return d>=300&&d<=1000; }
   return false;
 }
-function onFace(feat,blink,t){
-  if(cal.on){ calStep(feat,blink,t); return; }
+function onFace(feat,blink,t,q){
+  q=q||GOOD;
+  if(cal.on){ calStep(feat,blink,t,q); return; }
   const ended=blinkTrack(blink,t);
   if(!feat||!gazeModel){ if(t-gaze.t>400){ gaze.vis=false; } if(!feat){ dw.el=null; dw.p=0; } return; }
   if(blink<=0.35){                                        // eyelids move the iris landmarks: hold the cursor during a blink
@@ -364,8 +428,9 @@ const URLS={
   face:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
 };
 let stream=null, running=false, mod=null, files=null, handLM=null, faceLM=null;
-let fxs=oneEuro(), fys=oneEuro(), pinch=Pinch(), wasDown=false, lastLm=null;
-const hc={x:W/2,y:H/2,vis:false}, cur={x:W/2,y:H/2,vis:false,down:false};
+const mkSlot=()=>({fx:oneEuro(),fy:oneEuro(),pinch:Pinch(),was:false,down:false,x:W/2,y:H/2,vis:false,r:0,pp:null,lm:null,miss:99});
+const HS=[mkSlot(),mkSlot()];           // slot 0 = left on screen, slot 1 = right
+const cur={x:W/2,y:H/2,vis:false};     // gaze cursor
 let frames=0, fpsT=performance.now(), lastVT=-1, fi=0;
 
 async function make(cls,url,extra){
@@ -377,7 +442,7 @@ async function ensureModels(){
   if(!mod){ m.textContent='Loading tracker…'; mod=await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${V}/+esm`);
     files=await mod.FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${V}/wasm`); }
   if(mode!=='eye' && !handLM){ m.textContent='Loading hand model (about 8 MB, first time only)…'; hint('Loading hand model…');
-    handLM=await make(mod.HandLandmarker,URLS.hand,{numHands:1,minHandDetectionConfidence:.5,minHandPresenceConfidence:.5,minTrackingConfidence:.5}); }
+    handLM=await make(mod.HandLandmarker,URLS.hand,{numHands:2,minHandDetectionConfidence:.5,minHandPresenceConfidence:.5,minTrackingConfidence:.5}); }
   if(mode!=='hand' && !faceLM){ m.textContent='Loading eye model (about 4 MB, first time only)…'; hint('Loading eye model…');
     faceLM=await make(mod.FaceLandmarker,URLS.face,{numFaces:1,outputFaceBlendshapes:true,minFaceDetectionConfidence:.5,minFacePresenceConfidence:.5,minTrackingConfidence:.5}); }
   m.textContent=''; if(running) hint('Camera is on. Use Stop camera (top right) to turn it off at any time.');
@@ -404,7 +469,7 @@ function stopCamera(){
   running=false;
   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }   // camera light goes off here
   video.srcObject=null; document.body.classList.remove('on','cal'); $('#stop').style.display='none';
-  cal.on=false; endDrag(); hoverFrom({}); lastSnap=null; hc.vis=false; cur.vis=false; wasDown=false; lastLm=null; gaze.vis=false; dw.el=null; dw.p=0; blinkT0=0;
+  cal.on=false; endDrag(); endXf(); Object.keys(hov).forEach(k=>hoverFrom({},k)); lastSnap=null; HS.forEach((_,i)=>HS[i]=mkSlot()); cur.vis=false; gaze.vis=false; dw.el=null; dw.p=0; blinkT0=0;
   $('#v-state').textContent='OFF'; $('#v-hands').textContent='0'; $('#v-fps').textContent='0 fps'; $('#v-pinch').textContent='-'; $('#v-pstate').textContent='open'; $('#v-dwell').textContent='0%';
   hint('Camera is off. Tap Start camera to begin.');
   g.clearRect(0,0,W,H);
@@ -414,69 +479,96 @@ document.addEventListener('visibilitychange',()=>{ if(document.hidden && running
 addEventListener('pagehide',()=>{ if(running) stopCamera(); });
 
 const BONES=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
-function blinkOf(res){
-  const c=res?.faceBlendshapes?.[0]?.categories; if(!c) return 0;
-  let l=0,r=0; for(const k of c){ if(k.categoryName==='eyeBlinkLeft') l=k.score; else if(k.categoryName==='eyeBlinkRight') r=k.score; }
-  return Math.min(l,r);
+function bsMap(res){ const c=res?.faceBlendshapes?.[0]?.categories, o={}; if(c) for(const k of c) o[k.categoryName]=k.score; return o; }
+const bc=document.createElement('canvas'); bc.width=16; bc.height=12; const bg=bc.getContext('2d',{willReadFrequently:true});
+let bright=128;
+function sampleBright(){ try{ bg.drawImage(video,0,0,16,12); const d=bg.getImageData(0,0,16,12).data; let s=0; for(let i=0;i<d.length;i+=4) s+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; bright=s/(d.length/4); }catch(e){} }
+function faceQ(L){ return {fw:Math.hypot(L[454].x-L[234].x,L[454].y-L[234].y), cx:L[1].x, cy:L[1].y, bright}; }
+function processHands(dets,t){
+  const ts=t/1000, pos=dets.map(l=>mapRegion(l[8].x,l[8].y)), slotOf=[];
+  if(dets.length>=2){ const o=[0,1].sort((i,j)=>pos[i][0]-pos[j][0]); slotOf[o[0]]=0; slotOf[o[1]]=1; }
+  else if(dets.length===1){
+    const d=i=>HS[i].vis?Math.hypot(pos[0][0]-HS[i].x,pos[0][1]-HS[i].y):1e9;
+    slotOf[0]=d(1)<d(0)?1:0;                 // a lone hand keeps the slot it was already in
+  }
+  const seen=[false,false];
+  dets.slice(0,2).forEach((lm,i)=>{
+    const s=slotOf[i], S=HS[s]; seen[s]=true; S.miss=0; S.lm=lm; S.vis=true;
+    S.r=pinchRatio(lm); S.down=S.pinch(S.r);
+    if((!S.down&&!S.was)||(S.down&&(drags[s]||xf))){ S.x=S.fx(pos[i][0],ts); S.y=S.fy(pos[i][1],ts); }
+  });
+  for(let s=0;s<2;s++){ if(seen[s]) continue; const S=HS[s];
+    if(S.miss<3 && S.vis){ S.miss++; }                                      // tolerate a dropped frame
+    else if(S.vis||S.was){ if(S.was){ endDrag(s); S.pp=null; if(xf) endXf(); } HS[s]=mkSlot(); hoverFrom({},'h'+s); } }
+  const gazeOK = mode!=='hand' && gazeModel && gaze.vis && (t-gaze.t<500);
+  if(mode==='eye'){ if(!gazeOK) hoverFrom({}); }
+  for(let s=0;s<2;s++){
+    const S=HS[s]; if(!S.vis||mode==='eye') { if(mode==='eye') hoverFrom({},'h'+s); continue; }
+    let h;
+    if(mode==='both'&&gazeOK){ h=gaze.h||{}; hoverFrom({},'h'+s); } else h=hoverFrom(pick(S.x,S.y),'h'+s);
+    if(S.down&&!S.was){ S.pp=h.act?null:(h.panel||null); if(h.act) act(h.act); else if(h.handle&&!xf) startDrag(s,h.panel,S.x,S.y); }
+    if(S.down&&drags[s]) moveDrag(s,S.x,S.y);
+    if(!S.down&&S.was){ endDrag(s); S.pp=null; endXf(); }
+    S.was=S.down;
+  }
+  const A=HS[0],B=HS[1];
+  if(!xf && A.vis&&B.vis&&A.down&&B.down&&A.pp&&A.pp===B.pp) beginXf(A.pp,A,B);
+  if(xf){
+    if(A.vis&&B.vis&&A.down&&B.down){
+      if(A.r<.5&&B.r<.5){ const d=Math.hypot(B.x-A.x,B.y-A.y), a=Math.atan2(B.y-A.y,B.x-A.x);
+      xf.s=Math.min(2.2,Math.max(.5,xf.s0*d/xf.d0)); xf.r=xf.r0+(a-xf.a0); applyXf(xf.p,xf.s,xf.r); }   // fingers opening = release is near: stop updating
+    } else endXf();
+  }
+  const vis=HS.filter(x=>x.vis);
+  $('#v-hands').textContent=vis.length;
+  $('#v-pinch').textContent=vis.length?vis.map(x=>x.r.toFixed(2)).join(' / '):'-';
+  $('#v-pstate').textContent=xf?`ZOOM x${xf.s.toFixed(2)} · ${Math.round(xf.r*57.3)}°`:(vis.length?vis.map(x=>x.down?'PINCH':'open').join(' + '):'open');
+  cur.vis=!!gazeOK; cur.x=gaze.x; cur.y=gaze.y;
 }
 function loop(){
   if(!running) return;
   requestAnimationFrame(loop);
   if(video.readyState<2 || video.currentTime===lastVT) return; lastVT=video.currentTime;
-  const t=performance.now(); fi++;
+  const t=performance.now(); fi++; if(fi%15===1) sampleBright();
   frames++; if(t-fpsT>=1000){ $('#v-fps').textContent=(frames*1000/(t-fpsT)).toFixed(0)+' fps'; frames=0; fpsT=t; }
 
-  let lm=null;
-  if(mode!=='eye' && handLM){ let r=null; try{ r=handLM.detectForVideo(video,t); }catch(e){} lm=r?.landmarks?.[0]||null; }
-  lastLm=lm; $('#v-hands').textContent=lm?1:0;
-
+  let dets=[];
+  if(mode!=='eye' && handLM){ let r=null; try{ r=handLM.detectForVideo(video,t); }catch(e){} dets=r?.landmarks||[]; }
   if(mode!=='hand' && faceLM && (mode==='eye' || fi%2===0)){
     let r=null; try{ r=faceLM.detectForVideo(video,t); }catch(e){}
     const L=r?.landmarks?.[0];
-    if(L) onFace(eyeFeatures(L),blinkOf(r),t); else onFace(null,0,t);
+    if(L){ const bs=bsMap(r); onFace(eyeFeatures(L,bs),Math.min(bs.eyeBlinkLeft||0,bs.eyeBlinkRight||0),t,faceQ(L)); } else onFace(null,0,t);
   }
 
-  let down=false;
-  if(lm){
-    const [x,y]=mapRegion(lm[8].x,lm[8].y), ts=t/1000, r=pinchRatio(lm); down=pinch(r);
-    if((!down&&!wasDown)||(down&&drag)){ hc.x=fxs(x,ts); hc.y=fys(y,ts); }
-    hc.vis=true; $('#v-pinch').textContent=r.toFixed(2); $('#v-pstate').textContent=down?'PINCH':'open';
-  } else { hc.vis=false; fxs=oneEuro(); fys=oneEuro(); down=false; pinch=Pinch(); $('#v-pinch').textContent='-'; $('#v-pstate').textContent='open'; }
-
-  const gazeOK = mode!=='hand' && gazeModel && gaze.vis && (t-gaze.t<500);
-  let h={};
-  if(mode==='eye'){ cur.vis=!!gazeOK; cur.x=gaze.x; cur.y=gaze.y; down=false; if(!gazeOK) hoverFrom({}); }
-  else if(mode==='both' && gazeOK){ cur.vis=true; cur.x=gaze.x; cur.y=gaze.y; h=gaze.h||{}; }
-  else { cur.vis=hc.vis; cur.x=hc.x; cur.y=hc.y; h=hc.vis?hoverFrom(pick(hc.x,hc.y)):hoverFrom({}); }
-  if(mode!=='eye'){      // pinch = click / drag. Drag always follows the HAND so coarse gaze can't shake the panel.
-    if(down&&!wasDown){ if(h.act) act(h.act); else if(h.handle) startDrag(h.panel,hc.x,hc.y); }
-    if(down&&drag) moveDrag(hc.x,hc.y);
-    if(!down&&wasDown) endDrag();
-  }
-  wasDown=down; cur.down=down;
+  processHands(dets,t);
   render();
 }
 function render(){
   g.clearRect(0,0,W,H);
   const c=cssVar('--c');
-  if(state.skel && lastLm && mode!=='eye'){
+  if(state.skel && mode!=='eye'){
     g.lineWidth=1.5; g.strokeStyle=c; g.globalAlpha=.55; g.beginPath();
-    for(const [a,b] of BONES){ const [x1,y1]=mapRegion(lastLm[a].x,lastLm[a].y),[x2,y2]=mapRegion(lastLm[b].x,lastLm[b].y); g.moveTo(x1,y1); g.lineTo(x2,y2); }
+    for(const S of HS){ if(!S.vis||!S.lm) continue;
+      for(const [a,b] of BONES){ const [x1,y1]=mapRegion(S.lm[a].x,S.lm[a].y),[x2,y2]=mapRegion(S.lm[b].x,S.lm[b].y); g.moveTo(x1,y1); g.lineTo(x2,y2); } }
     g.stroke(); g.globalAlpha=1;
   }
-  if(mode==='both' && hc.vis && cur.x!==hc.x){ g.fillStyle=c; g.globalAlpha=.5; g.beginPath(); g.arc(hc.x,hc.y,5,0,7); g.fill(); g.globalAlpha=1; }
-  if(cur.vis){
-    g.strokeStyle=c; g.fillStyle=c; g.lineWidth=2; g.shadowColor=c; g.shadowBlur=14;
-    const R=mode==='hand'?(cur.down?9:16):(cur.down?14:26);
-    g.beginPath(); g.arc(cur.x,cur.y,R,0,7); g.stroke();
-    g.beginPath(); g.arc(cur.x,cur.y,3,0,7); g.fill();
-    if(dw.p>0){ g.lineWidth=4; g.beginPath(); g.arc(cur.x,cur.y,R+8,-Math.PI/2,-Math.PI/2+dw.p*2*Math.PI); g.stroke(); }
-    g.shadowBlur=0;
+  g.strokeStyle=c; g.fillStyle=c; g.lineWidth=2; g.shadowColor=c; g.shadowBlur=14;
+  const viaGaze = mode==='both' && cur.vis;
+  if(mode!=='eye'){
+    for(const S of HS){ if(!S.vis) continue;
+      g.globalAlpha=viaGaze?.5:1; const R=viaGaze?(S.down?6:9):(S.down?9:16);
+      g.beginPath(); g.arc(S.x,S.y,R,0,7); g.stroke(); g.beginPath(); g.arc(S.x,S.y,3,0,7); g.fill(); g.globalAlpha=1; }
+    if(xf&&HS[0].vis&&HS[1].vis){ g.globalAlpha=.6; g.setLineDash([6,6]); g.beginPath(); g.moveTo(HS[0].x,HS[0].y); g.lineTo(HS[1].x,HS[1].y); g.stroke(); g.setLineDash([]); g.globalAlpha=1; }
   }
+  if(cur.vis && mode!=='hand'){
+    const R=26; g.beginPath(); g.arc(cur.x,cur.y,R,0,7); g.stroke(); g.beginPath(); g.arc(cur.x,cur.y,3,0,7); g.fill();
+    if(dw.p>0){ g.lineWidth=4; g.beginPath(); g.arc(cur.x,cur.y,R+8,-Math.PI/2,-Math.PI/2+dw.p*2*Math.PI); g.stroke(); }
+  }
+  g.shadowBlur=0;
 }
 
 window.__holo={oneEuro,pinchRatio,Pinch,eyeFeatures,ridgeFit,ridgePredict,cvError,
-  t:{setMode,startCal,onFace,cal,CAL_PTS,snap,get model(){return gazeModel;},get mode(){return mode;}}};
+  t:{setMode,startCal,onFace,cal,trimSamples,processHands,HS,get xf(){return xf},CAL_PTS,snap,get model(){return gazeModel;},get mode(){return mode;}}};
 </script>
 </body>
 </html>
