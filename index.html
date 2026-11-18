@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>HOLOUI</title>
+<style>
+:root{--c:#2de2ff;--c2:#7a5cff;--bg:#02070d;--fg:#d9f7ff;--warn:#ff4d5e;}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
+#video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:.28;filter:saturate(.6) hue-rotate(160deg)}
+#grid{position:fixed;inset:0;background:
+ linear-gradient(var(--c) 1px,transparent 1px) 0 0/48px 48px,
+ linear-gradient(90deg,var(--c) 1px,transparent 1px) 0 0/48px 48px;opacity:.06;pointer-events:none}
+#fx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:50}
+#top{position:fixed;left:0;right:0;top:0;z-index:40;display:flex;gap:8px;align-items:center;justify-content:space-between;
+ padding:calc(8px + env(safe-area-inset-top,0px)) max(12px,env(safe-area-inset-right,0px)) 8px max(12px,env(safe-area-inset-left,0px));
+ background:linear-gradient(#02070dcc,transparent)}
+.brand{letter-spacing:.35em;font-weight:700;color:var(--c)}
+#live{display:none;align-items:center;gap:6px;color:var(--warn);font-weight:700;letter-spacing:.15em}
+#live i{width:9px;height:9px;border-radius:50%;background:var(--warn);box-shadow:0 0 10px var(--warn);animation:p 1s infinite}
+body.on #live{display:flex}
+@keyframes p{50%{opacity:.25}}
+button{font:inherit;color:var(--c);background:#04202acc;border:1px solid var(--c);border-radius:4px;padding:8px 12px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer}
+button:focus-visible{outline:2px solid var(--fg)}
+button.hot,button.hover{background:var(--c);color:#02121a;box-shadow:0 0 14px var(--c)}
+button.danger{color:var(--warn);border-color:var(--warn)}
+button.danger.hover,button.danger.hot{background:var(--warn);color:#fff;box-shadow:0 0 14px var(--warn)}
+#start{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:30;text-align:center;width:min(86vw,360px)}
+#start h1{letter-spacing:.5em;margin:0 0 6px;color:var(--c);font-size:28px;text-indent:.5em}
+#start p{margin:.6em 0 1.2em;opacity:.8}
+#start button{font-size:16px;padding:14px 22px}
+body.on #start{display:none}
+#msg{margin-top:12px;color:var(--warn);min-height:1.4em}
+.panel{position:fixed;z-index:20;min-width:170px;max-width:78vw;background:#031620d9;border:1px solid var(--c);border-radius:6px;box-shadow:0 0 24px #2de2ff30,inset 0 0 24px #2de2ff12;backdrop-filter:blur(4px)}
+.panel.drag{box-shadow:0 0 32px var(--c);z-index:25}
+.panel h2{margin:0;padding:8px 10px;font-size:11px;letter-spacing:.3em;color:var(--c);border-bottom:1px solid #2de2ff55;cursor:grab;display:flex;justify-content:space-between}
+.panel h2.hover{background:#2de2ff22}
+.panel .b{padding:10px;display:grid;gap:8px}
+.row{display:flex;justify-content:space-between;gap:12px}
+.row b{font-weight:600;color:var(--c);font-variant-numeric:tabular-nums;text-align:right}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+.btns button{padding:10px 12px}
+#orb{position:fixed;z-index:35;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));width:72px;height:72px;border-radius:50%;padding:0;letter-spacing:.05em;font-size:11px}
+#orb::before{content:"";position:absolute;inset:-8px;border:1px dashed var(--c);border-radius:50%;animation:s 12s linear infinite;opacity:.6}
+@keyframes s{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){#orb::before,#live i,#cal .dot{animation:none}}
+#hint{position:fixed;left:0;right:0;bottom:calc(8px + env(safe-area-inset-bottom,0px));text-align:center;opacity:.6;font-size:11px;z-index:10;padding:0 100px 0 16px}
+#cal{position:fixed;inset:0;z-index:60;background:#02070df0;display:none;touch-action:none}
+body.cal #cal{display:block}
+#cal .dot{position:absolute;width:38px;height:38px;margin:-19px 0 0 -19px;border-radius:50%;border:2px solid var(--c);box-shadow:0 0 18px var(--c);animation:p 1.2s infinite}
+#cal .dot::after{content:"";position:absolute;inset:13px;border-radius:50%;background:var(--c)}
+#cal .t{position:absolute;left:0;right:0;top:calc(46px + env(safe-area-inset-top,0px));text-align:center;padding:0 24px;color:var(--fg)}
+</style>
+</head>
+<body>
+<video id="video" playsinline muted autoplay></video>
+<div id="grid"></div>
+
+<div id="top">
+  <span class="brand">HOLOUI</span>
+  <span id="live"><i></i>CAMERA LIVE</span>
+  <button id="stop" class="danger" data-act="stop" style="display:none">Stop camera</button>
+</div>
+
+<div id="start">
+  <h1>HOLOUI</h1>
+  <p>Gesture and eye interface. The camera only turns on when you tap the button. Nothing is recorded or uploaded. Tracking runs on this phone.</p>
+  <button id="go">Start camera</button>
+  <div id="msg" role="status"></div>
+</div>
+
+<div class="panel" id="p-sys" style="left:12px;top:70px">
+  <h2 data-drag>SYSTEM <span>▭</span></h2>
+  <div class="b">
+    <div class="row"><span>Tracker</span><b id="v-state">OFF</b></div>
+    <div class="row"><span>Frame rate</span><b id="v-fps">0 fps</b></div>
+    <div class="row"><span>Hands seen</span><b id="v-hands">0</b></div>
+    <div class="row"><span>Pinch ratio</span><b id="v-pinch">-</b></div>
+    <div class="row"><span>Pinch</span><b id="v-pstate">open</b></div>
+    <div class="row"><span>Gaze error</span><b id="v-gerr">not set</b></div>
+    <div class="row"><span>Dwell</span><b id="v-dwell">0%</b></div>
+  </div>
+</div>
+
+<div class="panel" id="p-ctl" style="left:12px;top:350px">
+  <h2 data-drag>CONTROLS <span>▭</span></h2>
+  <div class="b">
+    <div class="btns">
+      <button data-act="mode">Mode: <span id="mode-s">HAND</span></button>
+      <button data-act="calib">Calibrate eyes</button>
+      <button data-act="blink">Blink click: <span id="blink-s">off</span></button>
+    </div>
+    <div class="btns">
+      <button data-act="theme" data-v="cyan">Cyan</button>
+      <button data-act="theme" data-v="violet">Violet</button>
+      <button data-act="theme" data-v="amber">Amber</button>
+    </div>
+    <div class="btns">
+      <button data-act="video">Video: <span id="vid-s">dim</span></button>
+      <button data-act="skel">Hand: <span id="skel-s">on</span></button>
+    </div>
+    <div class="row"><span>Taps</span><b id="v-taps">0</b></div>
+  </div>
+</div>
+
+<div class="panel" id="p-help" style="right:12px;top:70px;display:none">
+  <h2 data-drag>GESTURES <span data-act="close" data-v="p-help" style="cursor:pointer;padding:0 4px">✕</span></h2>
+  <div class="b">
+    <div>HAND: fingertip moves the cursor, thumb + index pinch clicks, pinch a title bar to drag.</div>
+    <div>EYE: look at a button and hold your gaze for one second. Panels can't be dragged.</div>
+    <div>BOTH: eyes aim, pinch clicks. Pinch a title bar and move your hand to drag.</div>
+    <div>Calibrate eyes first. Prop the phone up and keep your head still.</div>
+  </div>
+</div>
+
+<div class="panel" id="p-menu" style="right:16px;bottom:120px;display:none">
+  <h2>PANELS</h2>
+  <div class="b">
+    <button data-act="toggle" data-v="p-sys">System</button>
+    <button data-act="toggle" data-v="p-ctl">Controls</button>
+    <button data-act="toggle" data-v="p-help">Gestures</button>
+  </div>
+</div>
+
+<button id="orb" data-act="menu">MENU</button>
+<div id="hint">Tap a button, or use your hand once the camera is on.</div>
+<div id="cal"><div class="t" id="cal-t"></div><div class="dot" id="cal-dot"></div></div>
+<canvas id="fx"></canvas>
+
+<script type="module">
+const $ = s => document.querySelector(s);
+const video = $('#video'), fx = $('#fx'), g = fx.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+function resize(){ DPR = Math.min(2, devicePixelRatio||1); W = innerWidth; H = innerHeight; fx.width = W*DPR; fx.height = H*DPR; g.setTransform(DPR,0,0,DPR,0,0); }
+addEventListener('resize', resize); resize();
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ================= pure math (also exported for tests) ================= */
+function oneEuro(minCut=1.2, beta=0.02, dcut=1){
+  let px=null, dx=0, pt=0;
+  const a = (dt,c)=>{ const r=2*Math.PI*c*dt; return r/(r+1); };
+  return (x,t)=>{
+    if(px===null){ px=x; pt=t; return x; }
+    const dt=Math.max(1e-3,t-pt); pt=t;
+    const d=(x-px)/dt; dx = dx + a(dt,dcut)*(d-dx);
+    const c = minCut + beta*Math.abs(dx);
+    px = px + a(dt,c)*(x-px); return px;
+  };
+}
+function pinchRatio(lm){
+  const d=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  return d(lm[4],lm[8])/Math.max(1e-6,d(lm[0],lm[9]));
+}
+function Pinch(on=0.38,off=0.55,frames=2){
+  let down=false,cnt=0;
+  return r=>{
+    const want = down ? !(r>off) : (r<on);
+    if(want!==down){ cnt++; if(cnt>=frames){ down=want; cnt=0; } } else cnt=0;
+    return down;
+  };
+}
+function mapRegion(nx,ny){
+  const m=0.15, f=v=>Math.min(1,Math.max(0,(v-m)/(1-2*m)));
+  return [f(1-nx)*W, f(ny)*H];
+}
+/* eye features from the 478 face landmarks. Both eyes are measured in IMAGE x so they add up instead of cancelling. */
+function eyeFeatures(L){
+  const h=(i,a,b)=>{ const w=Math.abs(L[b].x-L[a].x)||1e-6; return (L[i].x-(L[a].x+L[b].x)/2)/w; };
+  const v=(i,t,b)=>{ const hh=(L[b].y-L[t].y)||1e-6; return (L[i].y-(L[t].y+L[b].y)/2)/hh; };
+  const ih=(h(468,33,133)+h(473,263,362))/2;
+  const iv=(v(468,159,145)+v(473,386,374))/2;
+  const fw=Math.hypot(L[454].x-L[234].x,L[454].y-L[234].y)||1e-6;
+  const fh=Math.hypot(L[152].x-L[10].x,L[152].y-L[10].y)||1e-6;
+  const yaw=(L[1].x-(L[234].x+L[454].x)/2)/fw;
+  const pitch=(L[1].y-(L[10].y+L[152].y)/2)/fh;
+  return [ih,iv,yaw,pitch,(L[33].x+L[263].x)/2,(L[33].y+L[263].y)/2];
+}
+function solve(A,b){
+  const n=b.length, M=A.map((r,i)=>[...r,b[i]]);
+  for(let c=0;c<n;c++){
+    let p=c; for(let r=c+1;r<n;r++) if(Math.abs(M[r][c])>Math.abs(M[p][c])) p=r;
+    [M[c],M[p]]=[M[p],M[c]]; const d=M[c][c]||1e-12;
+    for(let r=0;r<n;r++){ if(r===c) continue; const f=M[r][c]/d; if(f) for(let k=c;k<=n;k++) M[r][k]-=f*M[c][k]; }
+  }
+  return M.map((r,i)=>r[n]/(r[i]||1e-12));
+}
+const SD_FLOOR=[0.02,0.02,0.01,0.01,0.01,0.01];
+function ridgeFit(F,Y,lam=0.05){
+  const d=F[0].length, n=F.length, mu=Array(d).fill(0), sd=Array(d).fill(0);
+  F.forEach(f=>f.forEach((v,j)=>mu[j]+=v/n));
+  F.forEach(f=>f.forEach((v,j)=>sd[j]+=(v-mu[j])**2/n));
+  for(let j=0;j<d;j++) sd[j]=Math.max(Math.sqrt(sd[j]),SD_FLOOR[j]||1e-3);
+  const k=d+1, A=Array.from({length:k},()=>Array(k).fill(0)), B=[Array(k).fill(0),Array(k).fill(0)];
+  F.forEach((f,s)=>{ const x=[1,...f.map((v,j)=>(v-mu[j])/sd[j])];
+    for(let i=0;i<k;i++){ for(let j=0;j<k;j++) A[i][j]+=x[i]*x[j]; B[0][i]+=x[i]*Y[s][0]; B[1][i]+=x[i]*Y[s][1]; } });
+  for(let i=1;i<k;i++) A[i][i]+=lam*n;
+  return {mu,sd,wx:solve(A,B[0]),wy:solve(A,B[1])};
+}
+function ridgePredict(m,f){
+  const x=[1,...f.map((v,j)=>(v-m.mu[j])/m.sd[j])];
+  let px=0,py=0; for(let i=0;i<x.length;i++){ px+=x[i]*m.wx[i]; py+=x[i]*m.wy[i]; }
+  return [Math.min(1,Math.max(0,px)),Math.min(1,Math.max(0,py))];
+}
+/* leave-one-point-out error, in pixels: refit without one dot, predict that dot */
+function cvError(all,w,h){
+  const errs=[];
+  for(let p=0;p<9;p++){
+    const tr=all.filter(s=>s.pi!==p), te=all.filter(s=>s.pi===p); if(!te.length||!tr.length) continue;
+    const m=ridgeFit(tr.map(s=>s.f),tr.map(s=>s.y));
+    const pr=te.map(s=>ridgePredict(m,s.f)), mx=pr.reduce((a,b)=>a+b[0],0)/pr.length, my=pr.reduce((a,b)=>a+b[1],0)/pr.length;
+    errs.push(Math.hypot((mx-te[0].y[0])*w,(my-te[0].y[1])*h));
+  }
+  return errs.reduce((a,b)=>a+b,0)/Math.max(1,errs.length);
+}
+
+/* ================= UI: hover / click / drag shared by hand, eyes, touch, mouse ================= */
+let taps=0, drag=null, hoverEl=null;
+const panels=[...document.querySelectorAll('.panel')];
+function bringFront(p){ panels.forEach(q=>q.style.zIndex=20); p.style.zIndex=26; }
+function startDrag(p,x,y){ const r=p.getBoundingClientRect(); p.style.right='auto'; p.style.bottom='auto'; p.style.left=r.left+'px'; p.style.top=r.top+'px'; drag={p,dx:x-r.left,dy:y-r.top}; p.classList.add('drag'); bringFront(p); }
+function moveDrag(x,y){ if(!drag) return; const p=drag.p, r=p.getBoundingClientRect();
+  p.style.left=Math.min(W-r.width-4,Math.max(4,x-drag.dx))+'px'; p.style.top=Math.min(H-r.height-4,Math.max(40,y-drag.dy))+'px'; }
+function endDrag(){ if(drag){ drag.p.classList.remove('drag'); drag=null; } }
+const THEMES={cyan:['#2de2ff','#7a5cff'],violet:['#b388ff','#2de2ff'],amber:['#ffb347','#ff5e62']};
+const state={vid:1,skel:true};
+let mode='hand', blinkClick=false;
+const MODES=['hand','eye','both'];
+function hint(s){ $('#hint').textContent=s; }
+
+function act(el){
+  const a=el.dataset.act, v=el.dataset.v; if(!a) return;
+  taps++; $('#v-taps').textContent=taps;
+  if(a==='theme'){ const t=THEMES[v]; document.documentElement.style.setProperty('--c',t[0]); document.documentElement.style.setProperty('--c2',t[1]); }
+  else if(a==='video'){ state.vid=(state.vid+1)%3; video.style.opacity=[0,.28,.7][state.vid]; $('#vid-s').textContent=['off','dim','bright'][state.vid]; }
+  else if(a==='skel'){ state.skel=!state.skel; $('#skel-s').textContent=state.skel?'on':'off'; }
+  else if(a==='menu'){ const m=$('#p-menu'); m.style.display=(m.style.display==='none'||!m.style.display)?'block':'none'; }
+  else if(a==='toggle'){ const p=document.getElementById(v); p.style.display=(p.style.display==='none')?'block':'none'; }
+  else if(a==='close'){ document.getElementById(v).style.display='none'; }
+  else if(a==='stop'){ stopCamera(); }
+  else if(a==='mode'){ setMode(MODES[(MODES.indexOf(mode)+1)%3]); }
+  else if(a==='blink'){ blinkClick=!blinkClick; $('#blink-s').textContent=blinkClick?'on':'off'; }
+  else if(a==='calib'){
+    if(!running){ hint('Start the camera first, then calibrate.'); return; }
+    if(mode==='hand') setMode('both', false);
+    ensureModels().then(startCal).catch(e=>hint('Eye model failed: '+(e&&e.message||e)));
+  }
+}
+const vis = el => el.getClientRects().length>0;
+function pick(x,y){
+  const el=document.elementFromPoint(x,y); if(!el) return {};
+  const a=el.closest('[data-act]'), handle=el.closest('[data-drag]');
+  return {act:a, handle, panel:el.closest('.panel')};
+}
+/* snap a (coarse) gaze point to the nearest control within SNAP px; keeps the previous one unless clearly beaten */
+const SNAP=64; let lastSnap=null;
+function snap(x,y,withHandles){
+  const sel=withHandles?'[data-act],[data-drag]':'[data-act]';
+  let best=null,bd=1e9, prevD=1e9;
+  for(const el of document.querySelectorAll(sel)){
+    if(!vis(el)) continue;
+    const r=el.getBoundingClientRect();
+    const d=Math.hypot(Math.max(r.left-x,0,x-r.right),Math.max(r.top-y,0,y-r.bottom));
+    if(el===lastSnap) prevD=d;
+    if(d<=bd){ bd=d; best=el; }
+  }
+  if(best&&bd>SNAP) best=null;
+  if(lastSnap && prevD<=SNAP*1.3 && best!==lastSnap && (bd>prevD-12)) best=lastSnap;
+  lastSnap=best;
+  if(!best) return {};
+  return best.dataset.act?{act:best}:{handle:best,panel:best.closest('.panel')};
+}
+function hoverFrom(h){
+  const el=h.act||h.handle||null;
+  if(el!==hoverEl){ hoverEl?.classList.remove('hover'); el?.classList.add('hover'); hoverEl=el; }
+  return h;
+}
+addEventListener('pointerdown',e=>{
+  if(cal.on){ cancelCal('Calibration cancelled.'); return; }
+  if(e.target.closest('#go')) return;
+  const h=pick(e.clientX,e.clientY);
+  if(h.act){ act(h.act); return; }
+  if(h.handle) startDrag(h.panel,e.clientX,e.clientY);
+});
+addEventListener('pointermove',e=>moveDrag(e.clientX,e.clientY));
+addEventListener('pointerup',endDrag); addEventListener('pointercancel',endDrag);
+
+/* ================= eye tracking: calibration, gaze, dwell, blink ================= */
+const CAL_PTS=[[.1,.12],[.5,.12],[.9,.12],[.1,.5],[.5,.5],[.9,.5],[.1,.88],[.5,.88],[.9,.88]];
+const cal={on:false,i:0,ph:'settle',t0:0,s:[],all:[]};
+let gazeModel=null;
+const gaze={x:W/2,y:H/2,vis:false,t:0,h:{}};
+let gfx=oneEuro(.5,.004), gfy=oneEuro(.5,.004);
+const dw={el:null,t0:0,p:0}; let spent=null; const DWELL=1100;
+let blinkT0=0;
+
+function setMode(m, announce=true){
+  mode=m; $('#mode-s').textContent=m.toUpperCase();
+  hoverFrom({}); lastSnap=null; dw.el=null; dw.p=0; spent=null; endDrag();
+  if(m==='hand') gaze.vis=false;
+  if(announce && running){
+    ensureModels().then(()=>{ if(m!=='hand' && !gazeModel) startCal(); }).catch(e=>hint('Model failed: '+(e&&e.message||e)));
+  }
+}
+function showDot(){
+  const [px,py]=CAL_PTS[cal.i]; const d=$('#cal-dot'); d.style.left=px*100+'%'; d.style.top=py*100+'%';
+  $('#cal-t').textContent=`Look at the dot. Point ${cal.i+1} of 9. Keep your head still. Tap anywhere to cancel.`;
+}
+function startCal(){
+  cal.on=true; cal.i=0; cal.all=[]; cal.s=[]; cal.ph='settle'; cal.t0=performance.now();
+  endDrag(); hoverFrom({}); document.body.classList.add('cal'); showDot();
+}
+function cancelCal(m){ cal.on=false; document.body.classList.remove('cal'); hint(m); }
+function finishCal(){
+  cal.on=false; document.body.classList.remove('cal');
+  gazeModel=ridgeFit(cal.all.map(s=>s.f),cal.all.map(s=>s.y));
+  const e=cvError(cal.all,W,H); gaze.vis=false; gfx=oneEuro(.5,.004); gfy=oneEuro(.5,.004);
+  $('#v-gerr').textContent=`${Math.round(e)} px · ${(100*e/W).toFixed(0)}% of width`;
+  hint(e>0.28*W ? 'Calibration is rough. Use brighter light, hold still, and calibrate again for better results.' : 'Calibrated. Look at a button and hold your gaze to select.');
+}
+function calStep(feat,blink,t){
+  if(t-cal.t0>9000){ cancelCal('Could not see your face well enough. Face the camera in good light and try again.'); return; }
+  if(blink>0.35||!feat) return;
+  if(cal.ph==='settle'){ if(t-cal.t0>900){ cal.ph='collect'; cal.t0=t; cal.s=[]; } return; }
+  cal.s.push(feat);
+  if(cal.s.length>=22 || (t-cal.t0>3500 && cal.s.length>=8)){
+    cal.s.forEach(f=>cal.all.push({f,y:CAL_PTS[cal.i],pi:cal.i}));
+    cal.i++;
+    if(cal.i>=9) finishCal(); else { cal.ph='settle'; cal.t0=t; showDot(); }
+  }
+}
+function blinkTrack(b,t){        // true once, when a deliberate blink (0.3 to 1.0 s, both eyes) ends
+  if(b>0.55){ if(!blinkT0) blinkT0=t; return false; }
+  if(blinkT0){ const d=t-blinkT0; blinkT0=0; return d>=300&&d<=1000; }
+  return false;
+}
+function onFace(feat,blink,t){
+  if(cal.on){ calStep(feat,blink,t); return; }
+  const ended=blinkTrack(blink,t);
+  if(!feat||!gazeModel){ if(t-gaze.t>400){ gaze.vis=false; } if(!feat){ dw.el=null; dw.p=0; } return; }
+  if(blink<=0.35){                                        // eyelids move the iris landmarks: hold the cursor during a blink
+    const [nx,ny]=ridgePredict(gazeModel,feat), ts=t/1000;
+    gaze.x=gfx(nx*W,ts); gaze.y=gfy(ny*H,ts); gaze.vis=true; gaze.t=t;
+  }
+  if(mode==='hand') return;
+  const h=snap(gaze.x,gaze.y,mode==='both'); gaze.h=h; hoverFrom(h);
+  if(mode==='eye'){                                       // dwell: hold gaze on a control; look away before it can fire again
+    const el=h.act||null;
+    if(el!==spent) spent=null;
+    if(el && el!==spent){
+      if(el!==dw.el){ dw.el=el; dw.t0=t; }
+      dw.p=Math.min(1,(t-dw.t0)/DWELL);
+      if(dw.p>=1){ act(el); spent=el; dw.el=null; dw.p=0; }
+    } else { dw.el=null; dw.p=0; }
+    $('#v-dwell').textContent=Math.round(dw.p*100)+'%';
+  }
+  if(ended && blinkClick && h.act) act(h.act);
+}
+
+/* ================= camera + models ================= */
+const V='0.10.14';
+const URLS={
+  hand:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+  face:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
+};
+let stream=null, running=false, mod=null, files=null, handLM=null, faceLM=null;
+let fxs=oneEuro(), fys=oneEuro(), pinch=Pinch(), wasDown=false, lastLm=null;
+const hc={x:W/2,y:H/2,vis:false}, cur={x:W/2,y:H/2,vis:false,down:false};
+let frames=0, fpsT=performance.now(), lastVT=-1, fi=0;
+
+async function make(cls,url,extra){
+  const o=d=>({baseOptions:{modelAssetPath:url,delegate:d},runningMode:'VIDEO',...extra});
+  try{ return await cls.createFromOptions(files,o('GPU')); } catch(e){ return await cls.createFromOptions(files,o('CPU')); }
+}
+async function ensureModels(){
+  const m=$('#msg'); m.style.color='var(--c)';
+  if(!mod){ m.textContent='Loading tracker…'; mod=await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${V}/+esm`);
+    files=await mod.FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${V}/wasm`); }
+  if(mode!=='eye' && !handLM){ m.textContent='Loading hand model (about 8 MB, first time only)…'; hint('Loading hand model…');
+    handLM=await make(mod.HandLandmarker,URLS.hand,{numHands:1,minHandDetectionConfidence:.5,minHandPresenceConfidence:.5,minTrackingConfidence:.5}); }
+  if(mode!=='hand' && !faceLM){ m.textContent='Loading eye model (about 4 MB, first time only)…'; hint('Loading eye model…');
+    faceLM=await make(mod.FaceLandmarker,URLS.face,{numFaces:1,outputFaceBlendshapes:true,minFaceDetectionConfidence:.5,minFacePresenceConfidence:.5,minTrackingConfidence:.5}); }
+  m.textContent=''; if(running) hint('Camera is on. Use Stop camera (top right) to turn it off at any time.');
+}
+async function startCamera(){
+  const msg=$('#msg'); msg.style.color='var(--warn)'; msg.textContent='';
+  if(!navigator.mediaDevices?.getUserMedia){ msg.textContent='Camera needs HTTPS. Open this page from its https:// address in Safari.'; return; }
+  try{
+    $('#go').disabled=true;
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}},audio:false});
+    video.srcObject=stream; await video.play();
+    await ensureModels();
+    running=true; document.body.classList.add('on'); $('#stop').style.display='';
+    $('#v-state').textContent='LIVE'; hint('Camera is on. Use Stop camera (top right) to turn it off at any time.');
+    requestAnimationFrame(loop);
+    if(mode!=='hand' && !gazeModel) startCal();
+  }catch(e){
+    stopCamera();
+    msg.style.color='var(--warn)';
+    msg.textContent = e && e.name==='NotAllowedError' ? 'Camera permission was denied. Allow it in Safari: aA menu > Website Settings > Camera.' : ('Could not start: '+(e&&e.message||e));
+  } finally { $('#go').disabled=false; }
+}
+function stopCamera(){
+  running=false;
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }   // camera light goes off here
+  video.srcObject=null; document.body.classList.remove('on','cal'); $('#stop').style.display='none';
+  cal.on=false; endDrag(); hoverFrom({}); lastSnap=null; hc.vis=false; cur.vis=false; wasDown=false; lastLm=null; gaze.vis=false; dw.el=null; dw.p=0; blinkT0=0;
+  $('#v-state').textContent='OFF'; $('#v-hands').textContent='0'; $('#v-fps').textContent='0 fps'; $('#v-pinch').textContent='-'; $('#v-pstate').textContent='open'; $('#v-dwell').textContent='0%';
+  hint('Camera is off. Tap Start camera to begin.');
+  g.clearRect(0,0,W,H);
+}
+$('#go').addEventListener('click',startCamera);
+document.addEventListener('visibilitychange',()=>{ if(document.hidden && running) stopCamera(); });
+addEventListener('pagehide',()=>{ if(running) stopCamera(); });
+
+const BONES=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function blinkOf(res){
+  const c=res?.faceBlendshapes?.[0]?.categories; if(!c) return 0;
+  let l=0,r=0; for(const k of c){ if(k.categoryName==='eyeBlinkLeft') l=k.score; else if(k.categoryName==='eyeBlinkRight') r=k.score; }
+  return Math.min(l,r);
+}
+function loop(){
+  if(!running) return;
+  requestAnimationFrame(loop);
+  if(video.readyState<2 || video.currentTime===lastVT) return; lastVT=video.currentTime;
+  const t=performance.now(); fi++;
+  frames++; if(t-fpsT>=1000){ $('#v-fps').textContent=(frames*1000/(t-fpsT)).toFixed(0)+' fps'; frames=0; fpsT=t; }
+
+  let lm=null;
+  if(mode!=='eye' && handLM){ let r=null; try{ r=handLM.detectForVideo(video,t); }catch(e){} lm=r?.landmarks?.[0]||null; }
+  lastLm=lm; $('#v-hands').textContent=lm?1:0;
+
+  if(mode!=='hand' && faceLM && (mode==='eye' || fi%2===0)){
+    let r=null; try{ r=faceLM.detectForVideo(video,t); }catch(e){}
+    const L=r?.landmarks?.[0];
+    if(L) onFace(eyeFeatures(L),blinkOf(r),t); else onFace(null,0,t);
+  }
+
+  let down=false;
+  if(lm){
+    const [x,y]=mapRegion(lm[8].x,lm[8].y), ts=t/1000, r=pinchRatio(lm); down=pinch(r);
+    if((!down&&!wasDown)||(down&&drag)){ hc.x=fxs(x,ts); hc.y=fys(y,ts); }
+    hc.vis=true; $('#v-pinch').textContent=r.toFixed(2); $('#v-pstate').textContent=down?'PINCH':'open';
+  } else { hc.vis=false; fxs=oneEuro(); fys=oneEuro(); down=false; pinch=Pinch(); $('#v-pinch').textContent='-'; $('#v-pstate').textContent='open'; }
+
+  const gazeOK = mode!=='hand' && gazeModel && gaze.vis && (t-gaze.t<500);
+  let h={};
+  if(mode==='eye'){ cur.vis=!!gazeOK; cur.x=gaze.x; cur.y=gaze.y; down=false; if(!gazeOK) hoverFrom({}); }
+  else if(mode==='both' && gazeOK){ cur.vis=true; cur.x=gaze.x; cur.y=gaze.y; h=gaze.h||{}; }
+  else { cur.vis=hc.vis; cur.x=hc.x; cur.y=hc.y; h=hc.vis?hoverFrom(pick(hc.x,hc.y)):hoverFrom({}); }
+  if(mode!=='eye'){      // pinch = click / drag. Drag always follows the HAND so coarse gaze can't shake the panel.
+    if(down&&!wasDown){ if(h.act) act(h.act); else if(h.handle) startDrag(h.panel,hc.x,hc.y); }
+    if(down&&drag) moveDrag(hc.x,hc.y);
+    if(!down&&wasDown) endDrag();
+  }
+  wasDown=down; cur.down=down;
+  render();
+}
+function render(){
+  g.clearRect(0,0,W,H);
+  const c=cssVar('--c');
+  if(state.skel && lastLm && mode!=='eye'){
+    g.lineWidth=1.5; g.strokeStyle=c; g.globalAlpha=.55; g.beginPath();
+    for(const [a,b] of BONES){ const [x1,y1]=mapRegion(lastLm[a].x,lastLm[a].y),[x2,y2]=mapRegion(lastLm[b].x,lastLm[b].y); g.moveTo(x1,y1); g.lineTo(x2,y2); }
+    g.stroke(); g.globalAlpha=1;
+  }
+  if(mode==='both' && hc.vis && cur.x!==hc.x){ g.fillStyle=c; g.globalAlpha=.5; g.beginPath(); g.arc(hc.x,hc.y,5,0,7); g.fill(); g.globalAlpha=1; }
+  if(cur.vis){
+    g.strokeStyle=c; g.fillStyle=c; g.lineWidth=2; g.shadowColor=c; g.shadowBlur=14;
+    const R=mode==='hand'?(cur.down?9:16):(cur.down?14:26);
+    g.beginPath(); g.arc(cur.x,cur.y,R,0,7); g.stroke();
+    g.beginPath(); g.arc(cur.x,cur.y,3,0,7); g.fill();
+    if(dw.p>0){ g.lineWidth=4; g.beginPath(); g.arc(cur.x,cur.y,R+8,-Math.PI/2,-Math.PI/2+dw.p*2*Math.PI); g.stroke(); }
+    g.shadowBlur=0;
+  }
+}
+
+window.__holo={oneEuro,pinchRatio,Pinch,eyeFeatures,ridgeFit,ridgePredict,cvError,
+  t:{setMode,startCal,onFace,cal,CAL_PTS,snap,get model(){return gazeModel;},get mode(){return mode;}}};
+</script>
+</body>
+</html>
